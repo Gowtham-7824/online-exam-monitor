@@ -1,0 +1,199 @@
+import cv2
+import winsound
+import time
+
+# Load face detection model
+face_cascade = cv2.CascadeClassifier(
+    cv2.data.haarcascades +
+    "haarcascade_frontalface_default.xml"
+)
+
+# Load eye detection model
+eye_cascade = cv2.CascadeClassifier(
+    cv2.data.haarcascades +
+    "haarcascade_eye.xml"
+)
+
+# Check models
+if face_cascade.empty() or eye_cascade.empty():
+    print("Error: Detection models not loaded!")
+    exit()
+
+# Open laptop camera
+camera = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+
+if not camera.isOpened():
+    print("Error: Camera not found!")
+    exit()
+
+# Variables
+warning_count = 0
+last_warning_time = 0
+last_face_position = None
+face_missing_start = None
+
+print("ONLINE EXAM MONITORING STARTED")
+print("Press Q to stop the program")
+
+
+def warning(message):
+    global warning_count, last_warning_time
+
+    current_time = time.time()
+
+    # Avoid repeated alerts every frame
+    if current_time - last_warning_time > 3:
+        warning_count += 1
+        last_warning_time = current_time
+
+        print("WARNING:", message)
+        winsound.Beep(1000, 500)
+
+
+while True:
+    ret, frame = camera.read()
+
+    if not ret:
+        print("Cannot read camera!")
+        break
+
+    # Mirror the camera image
+    frame = cv2.flip(frame, 1)
+
+    # Convert to grayscale
+    gray = cv2.cvtColor(
+        frame, cv2.COLOR_BGR2GRAY
+    )
+
+    # Detect faces
+    faces = face_cascade.detectMultiScale(
+        gray,
+        scaleFactor=1.1,
+        minNeighbors=6,
+        minSize=(80, 80)
+    )
+
+    # Multiple face warning
+    if len(faces) > 1:
+        warning("Multiple faces detected!")
+
+    if len(faces) == 0:
+
+        if face_missing_start is None:
+            face_missing_start = time.time()
+
+        elif time.time() - face_missing_start > 3:
+            warning("Face not visible!")
+
+        cv2.putText(
+            frame,
+            "WARNING: FACE NOT VISIBLE",
+            (20, 40),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (0, 0, 255),
+            2
+        )
+
+    else:
+        face_missing_start = None
+
+        # Use the largest detected face
+        x, y, w, h = max(
+            faces,
+            key=lambda face: face[2] * face[3]
+        )
+
+        # Draw face rectangle
+        cv2.rectangle(
+            frame,
+            (x, y),
+            (x + w, y + h),
+            (0, 255, 0),
+            2
+        )
+
+        cv2.putText(
+            frame,
+            "Face Detected",
+            (x, y - 10),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (0, 255, 0),
+            2
+        )
+
+        # Check face movement
+        center_x = x + w // 2
+        center_y = y + h // 2
+
+        if last_face_position is not None:
+            old_x, old_y = last_face_position
+
+            movement = (
+                abs(center_x - old_x) +
+                abs(center_y - old_y)
+            )
+
+            # Detect large movement
+            if movement > 100:
+                warning("Sudden face movement!")
+
+        last_face_position = (center_x, center_y)
+
+        # Detect eyes within the face region
+        face_gray = gray[y:y+h, x:x+w]
+        face_color = frame[y:y+h, x:x+w]
+
+        eyes = eye_cascade.detectMultiScale(
+            face_gray,
+            scaleFactor=1.1,
+            minNeighbors=7,
+            minSize=(15, 15)
+        )
+
+        for (ex, ey, ew, eh) in eyes:
+            cv2.rectangle(
+                face_color,
+                (ex, ey),
+                (ex + ew, ey + eh),
+                (255, 0, 0),
+                2
+            )
+
+        cv2.putText(
+            frame,
+            "Eyes: " + str(len(eyes)),
+            (20, 75),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (255, 255, 0),
+            2
+        )
+
+    # Show warning count
+    cv2.putText(
+        frame,
+        "Alerts: " + str(warning_count),
+        (20, 110),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.7,
+        (0, 0, 255),
+        2
+    )
+
+    # Display monitoring window
+    cv2.imshow(
+        "Online Exam Monitoring System",
+        frame
+    )
+
+    # Press Q to exit
+    if cv2.waitKey(1) & 0xFF == ord("q"):
+        break
+
+camera.release()
+cv2.destroyAllWindows()
+
+print("Monitoring stopped.")
+print("Total alerts:", warning_count)
